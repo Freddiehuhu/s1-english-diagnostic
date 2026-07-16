@@ -45,3 +45,33 @@ test("protects teacher records and stores only the minimum review data", async (
   assert.match(schema, /teacherScoresJson/);
   assert.match(migration, /CREATE TABLE `assessment_submissions`/);
 });
+
+test("builds an event-driven teaching workspace with teacher approval gates", async () => {
+  const engine = await source("app/teaching-engine.ts");
+  const workspaceRoute = await source("app/api/teacher/workspaces/route.ts");
+  const workspaceUi = await source("app/teacher/workspace/teaching-workspace.tsx");
+  const schema = await source("db/schema.ts");
+
+  assert.match(engine, /TeachingWorkspaceData/);
+  assert.match(engine, /Evidence → This suggests → Answer/);
+  assert.match(engine, /TeacherReviewConfirmed/);
+  assert.match(engine, /StageAssessmentCompleted/);
+  assert.match(engine, /run_full_cycle/);
+  assert.match(workspaceRoute, /isAuthorisedTeacher/);
+  assert.match(workspaceRoute, /DiagnosticSubmitted/);
+  assert.match(workspaceUi, /90秒课后记录/);
+  assert.match(workspaceUi, /AI改进中心/);
+  assert.match(schema, /teaching_workspaces/);
+  assert.match(schema, /automation_events/);
+});
+
+test("protects student answers during network failures and records attempt duration", async () => {
+  const page = await source("app/page.tsx");
+  const route = await source("app/api/submissions/route.ts");
+  const schema = await source("db/schema.ts");
+
+  assert.match(page, /网络中断，答案仍保存在本机/);
+  assert.match(page, /finally/);
+  assert.match(route, /elapsedSeconds/);
+  assert.match(schema, /elapsed_seconds/);
+});

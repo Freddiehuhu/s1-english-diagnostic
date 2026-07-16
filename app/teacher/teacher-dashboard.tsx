@@ -1,5 +1,7 @@
 "use client";
+/* eslint-disable react-hooks/set-state-in-effect */
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { domainMeta, domains, questions, type Domain } from "../data";
 
@@ -91,11 +93,14 @@ export default function TeacherDashboard({
   return (
     <main>
       <header className="topbar">
-        <a className="brand" href="/">
+        <Link className="brand" href="/">
           <span className="brand-mark">S1</span>
           <span><strong>Teacher Console</strong><small>集中提交与证据复核</small></span>
-        </a>
-        <div className="teacher-account"><span>{teacherName}</span><a href={signOutPath}>退出</a></div>
+        </Link>
+        <div className="top-actions">
+          <Link className="teacher-link" href="/teacher/workspace">教学工作台</Link>
+          <div className="teacher-account"><span>{teacherName}</span><a href={signOutPath}>退出</a></div>
+        </div>
       </header>
 
       <section className="teacher-view">

@@ -82,6 +82,7 @@ export async function POST(request: Request) {
       studentCode?: string;
       studentGroup?: string;
       answers?: unknown;
+      startedAt?: string;
     };
 
     if (
@@ -105,6 +106,13 @@ export async function POST(request: Request) {
     const answeredCount = questions.filter((question) => answers[question.id]?.trim()).length;
     const id = crypto.randomUUID();
     const summary = objectiveSummary(answers);
+    const startedAtDate = payload.startedAt ? new Date(payload.startedAt) : null;
+    const validStartedAt = startedAtDate && !Number.isNaN(startedAtDate.getTime())
+      ? startedAtDate.toISOString()
+      : null;
+    const elapsedSeconds = validStartedAt
+      ? Math.max(0, Math.round((Date.now() - new Date(validStartedAt).getTime()) / 1000))
+      : null;
 
     const db = getDb();
     await db.insert(submissions).values({
@@ -117,6 +125,8 @@ export async function POST(request: Request) {
       objectiveJson: JSON.stringify(summary),
       answeredCount,
       totalItems: questions.length,
+      startedAt: validStartedAt,
+      elapsedSeconds,
     });
 
     return Response.json(

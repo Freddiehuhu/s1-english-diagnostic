@@ -8,6 +8,20 @@
       "when": 1784210635857,
       "tag": "0000_huge_blob",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1784220031367,
+      "tag": "0001_flat_earthquake",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1784220213459,
+      "tag": "0002_clear_spyke",
+      "breakpoints": true
     }
   ]
 }

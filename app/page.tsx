@@ -1,5 +1,7 @@
 "use client";
+/* eslint-disable react-hooks/set-state-in-effect */
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import {
   assessmentMeta,
@@ -233,27 +235,31 @@ export default function Home() {
     }
 
     setSubmitting(true);
-    const response = await fetch("/api/submissions", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        assessmentId: assessmentMeta.id,
-        assessmentVersion: assessmentMeta.version,
-        studentCode,
-        studentGroup,
-        answers,
-        startedAt,
-      }),
-    });
-    const payload = (await response.json()) as { receipt?: Receipt; error?: string };
-    if (!response.ok || !payload.receipt) {
-      setSubmitMessage(payload.error ?? "提交失败，本机草稿仍然保留。");
+    try {
+      const response = await fetch("/api/submissions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          assessmentId: assessmentMeta.id,
+          assessmentVersion: assessmentMeta.version,
+          studentCode,
+          studentGroup,
+          answers,
+          startedAt,
+        }),
+      });
+      const payload = (await response.json()) as { receipt?: Receipt; error?: string };
+      if (!response.ok || !payload.receipt) {
+        setSubmitMessage(payload.error ?? "提交失败，本机草稿仍然保留。");
+        return;
+      }
+      setReceipt(payload.receipt);
+      setSubmitMessage("");
+    } catch {
+      setSubmitMessage("网络中断，答案仍保存在本机。请恢复连接后再次提交。");
+    } finally {
       setSubmitting(false);
-      return;
     }
-    setReceipt(payload.receipt);
-    setSubmitMessage("");
-    setSubmitting(false);
   }
 
   function startNewAttempt() {
@@ -276,13 +282,13 @@ export default function Home() {
   return (
     <main>
       <header className="topbar">
-        <a className="brand" href="/">
+        <Link className="brand" href="/">
           <span className="brand-mark">S1</span>
           <span><strong>English Diagnostic</strong><small>测试流程原型 · 演示题库</small></span>
-        </a>
+        </Link>
         <div className="top-actions">
           <span className="demo-badge">DEMO {assessmentMeta.version}</span>
-          <a className="teacher-link" href="/teacher">教师后台</a>
+          <Link className="teacher-link" href="/teacher">教师后台</Link>
         </div>
       </header>
 
