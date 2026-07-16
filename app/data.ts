@@ -18,6 +18,19 @@ export type Question = {
   resource?: "readingA" | "readingB";
   audio?: "A" | "B" | "C";
   hint?: string;
+  sourceKind: "demo" | "official" | "licensed" | "teacher-authored";
+  reviewStatus: "draft" | "reviewed" | "published" | "retired";
+  version: string;
+  points: number;
+  difficultyTarget: "foundation" | "core" | "stretch";
+};
+
+export const assessmentMeta = {
+  id: "s1-demo-diagnostic",
+  version: "0.2.0-demo",
+  title: "S1 English Diagnostic",
+  status: "demo" as const,
+  contentNotice: "演示题库：用于测试流程和界面，不代表正式香港中一能力标准。",
 };
 
 export const domainMeta: Record<Domain, { label: string; short: string; description: string }> = {
@@ -76,11 +89,11 @@ export const readingB = {
 };
 
 const mcq = (id: string, domain: Domain, group: string, code: string, prompt: string, options: string[], answer: number, extra: Partial<Question> = {}): Question =>
-  ({ id, domain, group, code, prompt, type: "mcq", options, answer, ...extra });
+  ({ id, domain, group, code, prompt, type: "mcq", options, answer, sourceKind: "demo", reviewStatus: "draft", version: assessmentMeta.version, points: 1, difficultyTarget: "core", ...extra });
 const short = (id: string, domain: Domain, group: string, code: string, prompt: string, answer?: string, extra: Partial<Question> = {}): Question =>
-  ({ id, domain, group, code, prompt, type: "short", answer, ...extra });
+  ({ id, domain, group, code, prompt, type: "short", answer, sourceKind: "demo", reviewStatus: "draft", version: assessmentMeta.version, points: 1, difficultyTarget: "core", ...extra });
 const long = (id: string, domain: Domain, group: string, code: string, prompt: string, hint?: string): Question =>
-  ({ id, domain, group, code, prompt, type: "long", hint });
+  ({ id, domain, group, code, prompt, type: "long", hint, sourceKind: "demo", reviewStatus: "draft", version: assessmentMeta.version, points: 1, difficultyTarget: "core" });
 
 export const questions: Question[] = [
   mcq("L1", "listening", "Recording A", "L02", "What is the main purpose of the announcement?", ["Ask parents to organise an event", "Explain arrangements for Community Action Day", "Report that all activities are cancelled", "Teach students to pack food boxes"], 1, { audio: "A" }),

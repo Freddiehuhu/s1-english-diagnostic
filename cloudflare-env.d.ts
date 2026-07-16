@@ -7,5 +7,6 @@ type D1Database = any;
 declare module "cloudflare:workers" {
   export const env: {
     DB?: D1Database;
+    TEACHER_EMAIL?: string;
   };
 }
