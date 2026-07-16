@@ -75,3 +75,33 @@ test("protects student answers during network failures and records attempt durat
   assert.match(route, /elapsedSeconds/);
   assert.match(schema, /elapsed_seconds/);
 });
+
+test("uses real classroom, homework and stage-test inputs to update the teaching cycle", async () => {
+  const engine = await source("app/teaching-engine.ts");
+  const workspaceRoute = await source("app/api/teacher/workspaces/route.ts");
+  const workspaceUi = await source("app/teacher/workspace/teaching-workspace.tsx");
+
+  assert.match(engine, /AutomationInput/);
+  assert.match(engine, /completeClassRecord/);
+  assert.match(engine, /buildHomeworkFeedback/);
+  assert.match(engine, /evidenceTimeline/);
+  assert.match(workspaceRoute, /automationInput/);
+  assert.match(workspaceRoute, /真实学生不能写入模拟教学数据/);
+  assert.match(workspaceUi, /保存真实课堂记录/);
+  assert.match(workspaceUi, /保存真实作业结果/);
+  assert.match(workspaceUi, /生成真实阶段报告/);
+  assert.match(workspaceUi, /学生学习证据时间线/);
+});
+
+test("derives a protected question-quality report from durable submissions", async () => {
+  const itemQuality = await source("app/item-quality.ts");
+  const itemQualityRoute = await source("app/api/teacher/item-quality/route.ts");
+  const workspaceUi = await source("app/teacher/workspace/teaching-workspace.tsx");
+
+  assert.match(itemQuality, /buildItemQualityReport/);
+  assert.match(itemQuality, /缺少评分规则/);
+  assert.match(itemQuality, /难度待检查/);
+  assert.match(itemQualityRoute, /isAuthorisedTeacher/);
+  assert.match(itemQualityRoute, /TEACHER_EMAIL/);
+  assert.match(workspaceUi, /题目质量与评分覆盖/);
+});

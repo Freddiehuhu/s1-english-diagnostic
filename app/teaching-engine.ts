@@ -1,6 +1,6 @@
 import { domainMeta, questions, type Domain, type Question } from "./data";
 
-export const teachingPolicyVersion = "teaching-policy-0.1";
+export const teachingPolicyVersion = "teaching-policy-0.2";
 
 export type WorkspaceStage =
   | "diagnostic_ready"
@@ -17,6 +17,24 @@ export type AutomationAction =
   | "grade_homework"
   | "run_stage_test"
   | "run_full_cycle";
+
+export type AutomationInput = {
+  classRecord?: {
+    dimensions: Record<string, string>;
+    knowledge: Record<string, string>;
+    biggestGain?: string;
+    mainDifficulty?: string;
+    nextPriority?: string;
+  };
+  homework?: {
+    results: Record<string, number>;
+    teacherNote?: string;
+  };
+  stageTest?: {
+    results: Record<string, { post: number; delayed: number }>;
+  };
+  simulate?: boolean;
+};
 
 export type SubmissionForTeaching = {
   id: string;
@@ -112,6 +130,16 @@ export type TeachingWorkspaceData = {
     student: string;
     parent: string;
   };
+  evidenceTimeline: Array<{
+    id: string;
+    type: "diagnostic" | "teacher_review" | "plan" | "lesson" | "homework" | "stage_test";
+    title: string;
+    occurredAt: string;
+    summary: string;
+    skills: string[];
+    source: string;
+    confidence: "低" | "中" | "高";
+  }>;
   aiProposals: Array<{
     id: string;
     category: "student" | "teaching" | "content" | "policy";
@@ -446,6 +474,20 @@ export function buildTeachingWorkspace(submission: SubmissionForTeaching): Teach
       { skill: "主谓一致", baseline: 0, post: null, delayed: null, evidence: "初测" },
     ],
     reports: buildReports(isDemo),
+    evidenceTimeline: [
+      {
+        id: `diagnostic-${submission.id}`,
+        type: "diagnostic",
+        title: "完成S1综合诊断",
+        occurredAt: submission.submittedAt,
+        summary: isDemo
+          ? "建立听说读写、词汇和语法的初始能力基线，并定位优先补强项。"
+          : "客观题形成初始基线；开放题结论等待教师确认。",
+        skills: priorities.map((item) => item.code),
+        source: `诊断卷 ${submission.assessmentVersion}`,
+        confidence: isDemo ? "中" : "低",
+      },
+    ],
     aiProposals: [
       {
         id: "coverage-reading-open",
@@ -499,26 +541,120 @@ function simulatedClassRecord(): TeachingWorkspaceData["classRecord"] {
   };
 }
 
+function clampScore(value: number, total: number) {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(total, Math.round(value)));
+}
+
+function completeClassRecord(
+  current: TeachingWorkspaceData,
+  input: NonNullable<AutomationInput["classRecord"]>,
+): TeachingWorkspaceData["classRecord"] {
+  const dimensions = current.classRecord.dimensions.map((dimension) => ({
+    ...dimension,
+    value: input.dimensions[dimension.key] || "未记录",
+  }));
+  const knowledge = current.classRecord.knowledge.map((item) => ({
+    ...item,
+    state: input.knowledge[item.code] || "IN · 已介绍",
+  }));
+  const strongest = knowledge.find((item) => item.state.startsWith("TR"))
+    ?? knowledge.find((item) => item.state.startsWith("IP"));
+  const weakest = knowledge.find((item) => item.state.startsWith("RT"))
+    ?? knowledge.find((item) => item.state.startsWith("GP"))
+    ?? knowledge[knowledge.length - 1];
+  const prompting = dimensions.find((item) => item.key === "prompting")?.value;
+  const independence = dimensions.find((item) => item.key === "independence")?.value;
+
+  return {
+    status: "completed",
+    dimensions,
+    knowledge,
+    biggestGain: input.biggestGain?.trim()
+      || (strongest ? `${strongest.label}已经达到${strongest.state.replace(" · ", "（")}）阶段。` : "已完成本课目标练习。"),
+    mainDifficulty: input.mainDifficulty?.trim()
+      || (weakest ? `${weakest.label}仍处于${weakest.state.replace(" · ", "（")}）阶段。` : "需要继续收集独立表现证据。"),
+    nextPriority: input.nextPriority?.trim()
+      || `${weakest?.label ?? "本课目标"}继续保留；当前提示需要为“${prompting ?? "未记录"}”，独立完成为“${independence ?? "未记录"}”。`,
+  };
+}
+
+function timeline(data: TeachingWorkspaceData) {
+  data.evidenceTimeline ??= [];
+  return data.evidenceTimeline;
+}
+
+function addTimelineEntry(
+  data: TeachingWorkspaceData,
+  entry: Omit<TeachingWorkspaceData["evidenceTimeline"][number], "id" | "occurredAt">,
+) {
+  timeline(data).push({ ...entry, id: crypto.randomUUID(), occurredAt: new Date().toISOString() });
+}
+
+function buildHomeworkFeedback(groups: TeachingWorkspaceData["homework"]["groups"], teacherNote?: string) {
+  const percentages = groups.map((group) => ({
+    skill: group.skill,
+    percent: Math.round(((group.correct ?? 0) / group.total) * 100),
+  }));
+  const strong = percentages.filter((item) => item.percent >= 80).map((item) => item.skill);
+  const weak = percentages.filter((item) => item.percent < 60).map((item) => item.skill);
+  const average = Math.round(percentages.reduce((sum, item) => sum + item.percent, 0) / Math.max(percentages.length, 1));
+  return {
+    average,
+    strong,
+    weak,
+    automaticFeedback: `作业平均得分率${average}%。${strong.length ? `${strong.join("、")}表现相对稳定。` : "暂时没有达到稳定阈值的子技能。"}${weak.length ? `${weak.join("、")}低于60%，下一课应继续保留。` : "所有子技能均达到形成中或以上。"}`,
+    teacherCheck: teacherNote?.trim() || "请结合开放题答案确认：学生是理解不足、提示依赖，还是偶然粗心。",
+  };
+}
+
+export function upgradeTeachingWorkspace(data: TeachingWorkspaceData) {
+  const upgraded = structuredClone(data);
+  upgraded.policyVersion = teachingPolicyVersion;
+  upgraded.evidenceTimeline ??= [
+    {
+      id: `diagnostic-${upgraded.profile.sourceSubmissionId}`,
+      type: "diagnostic",
+      title: "完成S1综合诊断",
+      occurredAt: upgraded.profile.sourceSubmittedAt,
+      summary: upgraded.diagnostic.summary,
+      skills: upgraded.diagnostic.priorities.map((item) => item.code),
+      source: `诊断卷 ${upgraded.profile.sourceAssessmentVersion}`,
+      confidence: upgraded.profile.isDemo ? "中" : "低",
+    },
+  ];
+  return upgraded;
+}
+
 export function advanceTeachingWorkspace(
   current: TeachingWorkspaceData,
   currentCompleted: CompletedSteps,
   action: AutomationAction,
+  input: AutomationInput = {},
 ): { data: TeachingWorkspaceData; completed: CompletedSteps; stage: WorkspaceStage; eventType: string } {
   if (action === "run_full_cycle") {
     let state = { data: current, completed: currentCompleted, stage: "diagnostic_ready" as WorkspaceStage, eventType: "" };
     for (const step of ["confirm_diagnosis", "approve_plan", "complete_lesson", "grade_homework", "run_stage_test"] as const) {
-      state = advanceTeachingWorkspace(state.data, state.completed, step);
+      state = advanceTeachingWorkspace(state.data, state.completed, step, { simulate: true });
     }
     return { ...state, eventType: "FullCycleSimulated" };
   }
 
-  const data = structuredClone(current);
+  const data = upgradeTeachingWorkspace(current);
   const completed = { ...currentCompleted };
   data.generatedAt = new Date().toISOString();
 
   if (action === "confirm_diagnosis") {
     data.diagnostic.teacherDecision = "confirmed";
     completed.diagnosis = true;
+    addTimelineEntry(data, {
+      type: "teacher_review",
+      title: "教师确认诊断结论",
+      summary: `确认${data.diagnostic.priorities.length}项近期教学重点，开放题仍保留教师判断。`,
+      skills: data.diagnostic.priorities.map((item) => item.code),
+      source: "教师复核",
+      confidence: "高",
+    });
     return { data, completed, stage: "plan_ready", eventType: "TeacherReviewConfirmed" };
   }
 
@@ -527,29 +663,73 @@ export function advanceTeachingWorkspace(
     data.plan.lessons[0].status = "ready";
     data.lessonPlan.status = "approved";
     completed.plan = true;
+    addTimelineEntry(data, {
+      type: "plan",
+      title: "批准四课滚动计划",
+      summary: data.plan.rationale,
+      skills: data.diagnostic.priorities.map((item) => item.code),
+      source: "教师批准的教学计划",
+      confidence: "高",
+    });
     return { data, completed, stage: "lesson_ready", eventType: "PlanApproved" };
   }
 
   if (action === "complete_lesson") {
+    if (!input.classRecord && !input.simulate && !data.profile.isDemo) {
+      throw new Error("请先填写课堂记录，再完成本课。");
+    }
     data.lessonPlan.status = "completed";
     data.plan.lessons[0].status = "completed";
-    data.classRecord = simulatedClassRecord();
+    data.classRecord = input.classRecord
+      ? completeClassRecord(data, input.classRecord)
+      : simulatedClassRecord();
     data.homework.status = "assigned";
     completed.lesson = true;
+    addTimelineEntry(data, {
+      type: "lesson",
+      title: `完成${data.lessonPlan.title}`,
+      summary: `${data.classRecord.biggestGain} 主要困难：${data.classRecord.mainDifficulty}`,
+      skills: data.classRecord.knowledge.map((item) => item.code),
+      source: input.classRecord ? "真实课堂记录" : "虚拟课堂记录",
+      confidence: input.classRecord ? "高" : "低",
+    });
     return { data, completed, stage: "homework_ready", eventType: "LessonCompleted" };
   }
 
   if (action === "grade_homework") {
+    if (!input.homework && !input.simulate && !data.profile.isDemo) {
+      throw new Error("请先填写每组作业得分，再完成批改。");
+    }
     data.homework.status = "graded";
-    const results = [3, 4, 3, 3, 1];
-    data.homework.groups = data.homework.groups.map((group, index) => ({ ...group, correct: results[index] }));
-    data.homework.automaticFeedback = "事实与推断分类已经稳定；指代和推断选择正在形成。开放解释仍会只抄原文。";
-    data.homework.teacherCheck = "教师需确认开放解释题：是否真正说明证据与答案的关系。";
-    data.plan.lessons[1].focus = ["前20分钟继续证据解释", "主谓一致", "现在完成时", "短段落迁移"];
+    const simulated = [3, 4, 3, 3, 1];
+    data.homework.groups = data.homework.groups.map((group, index) => ({
+      ...group,
+      correct: clampScore(input.homework?.results[group.skill] ?? simulated[index], group.total),
+    }));
+    const feedback = buildHomeworkFeedback(data.homework.groups, input.homework?.teacherNote);
+    data.homework.automaticFeedback = feedback.automaticFeedback;
+    data.homework.teacherCheck = feedback.teacherCheck;
+    data.plan.lessons[1].focus = [
+      ...(feedback.weak.length ? feedback.weak.map((skill) => `补强：${skill}`) : ["把已形成能力迁移到新材料"]),
+      "主谓一致",
+      "现在完成时",
+      "短段落迁移",
+    ].slice(0, 5);
     completed.homework = true;
+    addTimelineEntry(data, {
+      type: "homework",
+      title: "完成针对性作业批改",
+      summary: data.homework.automaticFeedback,
+      skills: data.homework.groups.map((group) => group.skill),
+      source: input.homework ? "真实作业结果" : "虚拟作业结果",
+      confidence: input.homework ? "高" : "低",
+    });
     return { data, completed, stage: "next_lesson_ready", eventType: "HomeworkSubmitted" };
   }
 
+  if (!input.stageTest && !input.simulate && !data.profile.isDemo) {
+    throw new Error("请先填写后测和延迟复测结果。");
+  }
   data.progress = data.progress.map((item) => {
     const simulated: Record<string, [number, number]> = {
       事实信息查找: [92, 90],
@@ -559,13 +739,37 @@ export function advanceTeachingWorkspace(
       写作内容展开: [75, 75],
       主谓一致: [80, 70],
     };
-    const result = simulated[item.skill] ?? [item.baseline, item.baseline];
-    return { ...item, post: result[0], delayed: result[1], evidence: "平行后测 + 延迟复测（模拟）" };
+    const provided = input.stageTest?.results[item.skill];
+    const result = provided ? [provided.post, provided.delayed] : (simulated[item.skill] ?? [item.baseline, item.baseline]);
+    return {
+      ...item,
+      post: clampScore(result[0], 100),
+      delayed: clampScore(result[1], 100),
+      evidence: provided ? "平行后测 + 延迟复测" : "平行后测 + 延迟复测（模拟）",
+    };
   });
-  data.reports.teacher = "四课模拟闭环显示：指代和推断出现可观察改善，但延迟复测仍回落。下一周期继续证据解释，并把语法迁移到阅读反馈写作。";
-  data.reports.student = "你已经开始主动找证据，指代和推断比初测更稳定。下一步不是多做同样的题，而是练习用完整句解释为什么。";
-  data.reports.parent = "学生的直接信息查找保持稳定，指代和阅读推断在新材料中有明显改善。延迟复测仍有回落，因此目前判断为正在形成，还不能视为完全掌握。";
+  const averageGain = Math.round(data.progress.reduce((sum, item) => sum + ((item.post ?? item.baseline) - item.baseline), 0) / Math.max(data.progress.length, 1));
+  const averageRetention = Math.round(data.progress.reduce((sum, item) => sum + ((item.delayed ?? item.post ?? 0) - (item.post ?? 0)), 0) / Math.max(data.progress.length, 1));
+  const ranked = data.progress
+    .map((item) => ({ ...item, gain: (item.post ?? item.baseline) - item.baseline, retention: (item.delayed ?? item.post ?? 0) - (item.post ?? 0) }))
+    .sort((a, b) => b.gain - a.gain);
+  const strongestGain = ranked[0];
+  const largestDrop = [...ranked].sort((a, b) => a.retention - b.retention)[0];
+  const realLabel = input.stageTest ? "真实阶段闭环" : "模拟闭环";
+  data.reports.teacher = `${realLabel}显示：关键子技能后测平均变化${averageGain >= 0 ? "+" : ""}${averageGain}个百分点，延迟复测相对后测${averageRetention >= 0 ? "+" : ""}${averageRetention}个百分点。下一周期优先处理延迟回落最大的能力。`;
+  data.reports.student = averageGain >= 0
+    ? `你的重点能力平均提高了${averageGain}个百分点，其中${strongestGain?.skill ?? "目标能力"}进步最明显。下一步继续练习${largestDrop?.skill ?? "延迟保持"}，让学会的内容过一段时间仍能使用。`
+    : `这次后测平均比初测低${Math.abs(averageGain)}个百分点。暂时不要增加难度，下一周期先重新检查前置知识、提示方式和练习负担。`;
+  data.reports.parent = `本阶段使用平行后测和延迟复测进行比较。后测平均变化为${averageGain >= 0 ? "+" : ""}${averageGain}个百分点，延迟保持变化为${averageRetention >= 0 ? "+" : ""}${averageRetention}个百分点。${averageRetention < -10 ? "部分能力仍明显回落，目前不能判断为稳定掌握。" : "已学内容的保持情况基本可接受，仍需在新情境中继续观察。"}`;
   completed.stageTest = true;
+  addTimelineEntry(data, {
+    type: "stage_test",
+    title: "完成阶段复测",
+    summary: data.reports.teacher,
+    skills: data.progress.map((item) => item.skill),
+    source: input.stageTest ? "真实后测与延迟复测" : "虚拟复测数据",
+    confidence: input.stageTest ? "高" : "低",
+  });
   return { data, completed, stage: "cycle_complete", eventType: "StageAssessmentCompleted" };
 }
 

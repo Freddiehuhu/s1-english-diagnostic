@@ -406,6 +406,42 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .proposal-list p { color: var(--muted); margin: 6px 0; line-height: 1.55; }
 .proposal-list p strong { color: var(--ink); }
 .proposal-list footer { margin-top: 12px; padding-top: 10px; border-top: 1px dashed #ccd5dd; color: var(--teal); font-size: 10px; font-weight: 800; }
+.knowledge-grid select, .record-note-fields input, .teacher-note-field textarea, .trend-table input, .score-entry input { width: 100%; border: 1px solid #cbd5df; border-radius: 8px; background: white; color: var(--ink); padding: 8px; font: inherit; }
+.knowledge-grid select { margin-top: 6px; font-size: 10px; }
+.record-note-fields { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 10px; }
+.record-note-fields label, .teacher-note-field { display: grid; gap: 6px; color: var(--navy); font-size: 10px; font-weight: 800; }
+.record-note-fields label { padding: 13px; border: 1px solid var(--line); border-radius: 12px; background: white; }
+.score-entry { display: grid; grid-template-columns: minmax(0, 72px) auto; align-items: center; gap: 6px; color: var(--muted); }
+.score-entry input { color: var(--teal); font-size: 18px; font-weight: 850; }
+.teacher-note-field { margin-top: 10px; padding: 15px; border: 1px solid var(--line); border-radius: 12px; background: white; }
+.trend-table input { max-width: 80px; color: var(--teal); font-weight: 850; }
+.evidence-timeline { position: relative; display: grid; gap: 10px; margin-top: 12px; padding-left: 26px; }
+.evidence-timeline::before { content: ""; position: absolute; left: 8px; top: 12px; bottom: 12px; width: 2px; background: #c9d7df; }
+.evidence-timeline article { position: relative; padding: 16px 18px; border: 1px solid var(--line); border-radius: 14px; background: white; }
+.evidence-timeline article::before { content: ""; position: absolute; left: -24px; top: 22px; width: 11px; height: 11px; border: 3px solid white; border-radius: 50%; background: var(--teal); box-shadow: 0 0 0 2px #9ecfc6; }
+.evidence-timeline article > div { display: flex; justify-content: space-between; gap: 10px; color: var(--muted); font-size: 9px; }
+.evidence-timeline article > div b { color: var(--teal); }
+.evidence-timeline article > small { display: block; margin-top: 8px; color: #80611e; font-weight: 900; letter-spacing: .08em; }
+.evidence-timeline h4 { margin: 5px 0; color: var(--navy); font-size: 17px; }
+.evidence-timeline p { margin: 0; color: #4b586b; line-height: 1.6; }
+.evidence-timeline footer { display: flex; justify-content: space-between; gap: 12px; margin-top: 11px; padding-top: 9px; border-top: 1px dashed #d5dde4; color: var(--muted); font-size: 9px; }
+.evidence-timeline footer em { color: var(--teal); font-style: normal; font-weight: 800; }
+.quality-summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 10px; }
+.quality-summary article { padding: 15px; border: 1px solid var(--line); border-radius: 12px; background: white; display: flex; flex-direction: column; gap: 5px; }
+.quality-summary span { color: var(--muted); font-size: 10px; }
+.quality-summary strong { color: var(--navy); font-size: 25px; }
+.quality-table-wrap { margin-top: 10px; overflow-x: auto; border: 1px solid var(--line); border-radius: 14px; background: white; }
+.quality-table { width: 100%; min-width: 760px; border-collapse: collapse; }
+.quality-table th, .quality-table td { padding: 11px 13px; border-bottom: 1px solid #e8edf1; text-align: left; }
+.quality-table th { background: #edf2f6; color: var(--navy); font-size: 10px; }
+.quality-table td { color: #4c596c; font-size: 11px; }
+.quality-table td:first-child { display: grid; gap: 3px; }
+.quality-table td:first-child strong { color: var(--navy); }
+.quality-table td:first-child small { color: var(--muted); }
+.quality-flag { display: inline-block; padding: 5px 7px; border-radius: 7px; background: #eef2f5; color: #4f5e71; font-size: 9px; font-weight: 850; }
+.flag-缺少评分规则, .flag-难度待检查 { background: #fff0f2; color: #a02d3b; }
+.flag-样本不足 { background: var(--gold-soft); color: #76570d; }
+.flag-待教师审核 { background: var(--teal-soft); color: #086a5e; }
 
 @media (max-width: 980px) {
   .app-shell { grid-template-columns: 1fr; }
@@ -429,6 +465,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   .harness-summary { grid-template-columns: repeat(2, 1fr); }
   .quick-record { grid-template-columns: repeat(3, 1fr); }
   .homework-grid { grid-template-columns: repeat(3, 1fr); }
+  .record-note-fields, .quality-summary { grid-template-columns: repeat(2, 1fr); }
 }
 
 @media (max-width: 680px) {
@@ -490,6 +527,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   .timeline > div { min-width: 760px; }
   .quick-record { grid-template-columns: 1fr 1fr; }
   .homework-grid { grid-template-columns: 1fr 1fr; }
+  .record-note-fields, .quality-summary { grid-template-columns: 1fr; }
   .trend-table { overflow-x: auto; }
   .trend-table > div { min-width: 720px; }
 }

@@ -4,8 +4,10 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { domainMeta } from "../../data";
+import type { ItemQualityReport } from "../../item-quality";
 import type {
   AutomationAction,
+  AutomationInput,
   CompletedSteps,
   TeachingWorkspaceData,
   WorkspaceStage,
@@ -27,7 +29,7 @@ type WorkspaceItem = {
   updatedAt: string;
 };
 
-type TabKey = "overview" | "diagnostic" | "plan" | "lesson" | "record" | "homework" | "report" | "ai";
+type TabKey = "overview" | "diagnostic" | "plan" | "lesson" | "record" | "homework" | "timeline" | "report" | "items" | "ai";
 
 const tabs: Array<{ key: TabKey; label: string }> = [
   { key: "overview", label: "总览" },
@@ -36,7 +38,9 @@ const tabs: Array<{ key: TabKey; label: string }> = [
   { key: "lesson", label: "教师教案" },
   { key: "record", label: "课后记录" },
   { key: "homework", label: "作业" },
+  { key: "timeline", label: "学习轨迹" },
   { key: "report", label: "进步报告" },
+  { key: "items", label: "题目质量" },
   { key: "ai", label: "AI改进" },
 ];
 
@@ -57,6 +61,8 @@ const recordOptions: Record<string, string[]> = {
   correction: ["被动接受", "愿意修改", "主动修改"],
 };
 
+const knowledgeOptions = ["IN · 已介绍", "GP · 引导完成", "IP · 独立完成", "TR · 迁移使用", "RT · 需要重教"];
+
 export default function TeachingWorkspace({ teacherName, signOutPath }: { teacherName: string; signOutPath: string }) {
   const [items, setItems] = useState<WorkspaceItem[]>([]);
   const [selectedId, setSelectedId] = useState("");
@@ -66,15 +72,24 @@ export default function TeachingWorkspace({ teacherName, signOutPath }: { teache
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [recordSelections, setRecordSelections] = useState<Record<string, string>>({});
+  const [knowledgeSelections, setKnowledgeSelections] = useState<Record<string, string>>({});
+  const [recordNotes, setRecordNotes] = useState({ biggestGain: "", mainDifficulty: "", nextPriority: "" });
+  const [homeworkScores, setHomeworkScores] = useState<Record<string, number>>({});
+  const [homeworkNote, setHomeworkNote] = useState("");
+  const [stageScores, setStageScores] = useState<Record<string, { post?: number; delayed?: number }>>({});
+  const [itemQuality, setItemQuality] = useState<ItemQualityReport | null>(null);
 
   async function sync() {
     setLoading(true);
     setError("");
-    const response = await fetch("/api/teacher/workspaces", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ action: "sync" }),
-    });
+    const [response, qualityResponse] = await Promise.all([
+      fetch("/api/teacher/workspaces", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "sync" }),
+      }),
+      fetch("/api/teacher/item-quality", { cache: "no-store" }),
+    ]);
     const payload = (await response.json()) as { items?: WorkspaceItem[]; message?: string; error?: string };
     if (!response.ok) setError(payload.error ?? "无法同步教学工作区。");
     else {
@@ -82,6 +97,10 @@ export default function TeachingWorkspace({ teacherName, signOutPath }: { teache
       setItems(next);
       setSelectedId((current) => current || next.find((item) => item.isDemo)?.id || next[0]?.id || "");
       setMessage(payload.message ?? "");
+    }
+    if (qualityResponse.ok) {
+      const qualityPayload = (await qualityResponse.json()) as { report?: ItemQualityReport };
+      setItemQuality(qualityPayload.report ?? null);
     }
     setLoading(false);
   }
@@ -101,7 +120,7 @@ export default function TeachingWorkspace({ teacherName, signOutPath }: { teache
     );
   }, [selected]);
 
-  async function advance(action: AutomationAction) {
+  async function advance(action: AutomationAction, automationInput?: AutomationInput) {
     if (!selected) return;
     setRunning(action);
     setError("");
@@ -109,7 +128,7 @@ export default function TeachingWorkspace({ teacherName, signOutPath }: { teache
     const response = await fetch("/api/teacher/workspaces", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ action: "advance", workspaceId: selected.id, automationAction: action }),
+      body: JSON.stringify({ action: "advance", workspaceId: selected.id, automationAction: action, automationInput }),
     });
     const payload = (await response.json()) as { items?: WorkspaceItem[]; message?: string; error?: string };
     if (!response.ok) setError(payload.error ?? "自动化步骤执行失败。");
@@ -121,9 +140,54 @@ export default function TeachingWorkspace({ teacherName, signOutPath }: { teache
       if (action === "complete_lesson") setActiveTab("homework");
       if (action === "grade_homework") setActiveTab("report");
       if (action === "run_stage_test" || action === "run_full_cycle") setActiveTab("report");
+      if (action === "complete_lesson" || action === "grade_homework" || action === "run_stage_test") resetEntryForms();
     }
     setRunning("");
   }
+
+  function resetEntryForms() {
+    setRecordSelections({});
+    setKnowledgeSelections({});
+    setRecordNotes({ biggestGain: "", mainDifficulty: "", nextPriority: "" });
+    setHomeworkScores({});
+    setHomeworkNote("");
+    setStageScores({});
+  }
+
+  function saveClassRecord() {
+    if (!selected) return;
+    void advance("complete_lesson", {
+      classRecord: {
+        dimensions: recordSelections,
+        knowledge: knowledgeSelections,
+        ...recordNotes,
+      },
+    });
+  }
+
+  function saveHomework() {
+    void advance("grade_homework", { homework: { results: homeworkScores, teacherNote: homeworkNote } });
+  }
+
+  function saveStageTest() {
+    if (!selected) return;
+    const results = Object.fromEntries(selected.data.progress.map((row) => [
+      row.skill,
+      { post: stageScores[row.skill]?.post ?? row.baseline, delayed: stageScores[row.skill]?.delayed ?? stageScores[row.skill]?.post ?? row.baseline },
+    ]));
+    void advance("run_stage_test", { stageTest: { results } });
+  }
+
+  const classRecordComplete = selected
+    ? selected.data.classRecord.dimensions.every((item) => recordSelections[item.key])
+      && selected.data.classRecord.knowledge.every((item) => knowledgeSelections[item.code])
+    : false;
+  const homeworkComplete = selected
+    ? selected.data.homework.groups.every((group) => Number.isFinite(homeworkScores[group.skill]))
+    : false;
+  const stageTestComplete = selected
+    ? selected.data.progress.every((row) => Number.isFinite(stageScores[row.skill]?.post) && Number.isFinite(stageScores[row.skill]?.delayed))
+    : false;
 
   return (
     <main>
@@ -148,7 +212,7 @@ export default function TeachingWorkspace({ teacherName, signOutPath }: { teache
           </div>
           <div className="harness-hero-actions">
             <button className="secondary-button" onClick={() => void sync()} disabled={loading}>{loading ? "同步中…" : "同步最新诊断"}</button>
-            <button className="primary-button" onClick={() => void advance("run_full_cycle")} disabled={!selected || Boolean(running)}>
+            <button className="primary-button" onClick={() => void advance("run_full_cycle")} disabled={!selected?.isDemo || Boolean(running)} title={selected?.isDemo ? "使用模拟课堂、作业和复测数据验证系统" : "仅虚拟学生可运行模拟闭环"}>
               {running === "run_full_cycle" ? "运行中…" : "自动运行虚拟闭环"}
             </button>
           </div>
@@ -158,7 +222,7 @@ export default function TeachingWorkspace({ teacherName, signOutPath }: { teache
           <article><span>学生工作区</span><strong>{items.length}</strong><small>由最新诊断自动建立</small></article>
           <article><span>等待教师决定</span><strong>{pendingDecisions}</strong><small>诊断或计划尚未确认</small></article>
           <article><span>闭环完成</span><strong>{completedCycles}</strong><small>包含复测与报告</small></article>
-          <article><span>当前策略</span><strong className="policy-number">0.1</strong><small>所有操作均保留版本</small></article>
+          <article><span>当前策略</span><strong className="policy-number">0.2</strong><small>真实课堂与作业驱动</small></article>
         </div>
 
         {message && <div className="inline-message">{message}</div>}
@@ -171,7 +235,7 @@ export default function TeachingWorkspace({ teacherName, signOutPath }: { teache
               <button
                 key={item.id}
                 className={item.id === selectedId ? "active" : ""}
-                onClick={() => { setSelectedId(item.id); setActiveTab("overview"); setRecordSelections({}); }}
+                onClick={() => { setSelectedId(item.id); setActiveTab("overview"); resetEntryForms(); }}
               >
                 <span><strong>{item.studentCode}</strong><small>{item.studentGroup || "未填写测试组"}</small></span>
                 <span><b>{stageLabels[item.stage]}</b>{item.isDemo && <em>虚拟</em>}</span>
@@ -223,7 +287,7 @@ export default function TeachingWorkspace({ teacherName, signOutPath }: { teache
                     </div>
                     <section className="automation-next">
                       <div><div className="eyebrow">NEXT BEST ACTION</div><h3>{nextActionTitle(selected)}</h3><p>{nextActionDescription(selected)}</p></div>
-                      {nextActionButton(selected, running, advance)}
+                      {nextActionButton(selected, running, advance, setActiveTab)}
                     </section>
                   </div>
                 )}
@@ -273,27 +337,63 @@ export default function TeachingWorkspace({ teacherName, signOutPath }: { teache
                     <div className="quick-record">{selected.data.classRecord.dimensions.map((dimension) => (
                       <section key={dimension.key}><strong>{dimension.label}</strong>{selected.data.classRecord.status === "completed" ? <b>{dimension.value}</b> : <div>{(recordOptions[dimension.key] ?? []).map((option) => <button key={option} className={recordSelections[dimension.key] === option ? "active" : ""} onClick={() => setRecordSelections((current) => ({ ...current, [dimension.key]: option }))}>{option}</button>)}</div>}</section>
                     ))}</div>
-                    <div className="knowledge-grid">{selected.data.classRecord.knowledge.map((item) => <article key={item.code}><small>{item.code}</small><strong>{item.label}</strong><span>{item.state}</span></article>)}</div>
+                    <div className="knowledge-grid">{selected.data.classRecord.knowledge.map((item) => <article key={item.code}><small>{item.code}</small><strong>{item.label}</strong>{selected.data.classRecord.status === "completed" ? <span>{item.state}</span> : <select value={knowledgeSelections[item.code] ?? ""} onChange={(event) => setKnowledgeSelections((current) => ({ ...current, [item.code]: event.target.value }))}><option value="" disabled>选择课堂状态</option>{knowledgeOptions.map((option) => <option value={option} key={option}>{option}</option>)}</select>}</article>)}</div>
+                    {selected.data.classRecord.status !== "completed" && <div className="record-note-fields">
+                      <label>本课最大进步（可选）<input value={recordNotes.biggestGain} onChange={(event) => setRecordNotes((current) => ({ ...current, biggestGain: event.target.value }))} placeholder="留空则由系统根据勾选自动总结" /></label>
+                      <label>本课主要困难（可选）<input value={recordNotes.mainDifficulty} onChange={(event) => setRecordNotes((current) => ({ ...current, mainDifficulty: event.target.value }))} placeholder="例如：找到证据但不能解释" /></label>
+                      <label>下节课优先事项（可选）<input value={recordNotes.nextPriority} onChange={(event) => setRecordNotes((current) => ({ ...current, nextPriority: event.target.value }))} placeholder="留空则自动选择最低状态能力" /></label>
+                    </div>}
                     {selected.data.classRecord.status === "completed" && <div className="record-notes"><p><strong>最大进步：</strong>{selected.data.classRecord.biggestGain}</p><p><strong>主要困难：</strong>{selected.data.classRecord.mainDifficulty}</p><p><strong>下节优先：</strong>{selected.data.classRecord.nextPriority}</p></div>}
-                    {!selected.completed.lesson && <div className="panel-action"><span>保存后自动生成作业、反馈和状态更新建议。</span><button className="primary-button" onClick={() => void advance("complete_lesson")} disabled={!selected.completed.plan || Boolean(running)}>保存并完成本课</button></div>}
+                    {!selected.completed.lesson && <div className="panel-action"><span>{classRecordComplete ? "记录完整：保存后将自动生成作业并更新下一步建议。" : "请完成5项课堂表现和3项知识状态。"}</span><button className="primary-button" onClick={saveClassRecord} disabled={!selected.completed.plan || !classRecordComplete || Boolean(running)}>保存真实课堂记录</button></div>}
                   </div>
                 )}
 
                 {activeTab === "homework" && (
                   <div className="workspace-panel">
                     <div className="panel-heading"><div><h3>针对性作业</h3><p>客观题自动批改；开放解释题由AI定位证据链，教师确认。</p></div><span>{selected.data.homework.status === "graded" ? "已批改" : selected.data.homework.status === "assigned" ? "已布置" : "草稿"}</span></div>
-                    <div className="homework-grid">{selected.data.homework.groups.map((group) => <article key={group.skill}><small>{group.mode === "auto" ? "自动批改" : "AI初评＋教师确认"}</small><h4>{group.skill}</h4><strong>{group.correct === null ? `共${group.total}题` : `${group.correct}/${group.total}`}</strong><div className="mini-bar"><span style={{ width: group.correct === null ? "0%" : `${Math.round((group.correct / group.total) * 100)}%` }} /></div></article>)}</div>
+                    <div className="homework-grid">{selected.data.homework.groups.map((group) => <article key={group.skill}><small>{group.mode === "auto" ? "自动批改" : "AI初评＋教师确认"}</small><h4>{group.skill}</h4>{selected.data.homework.status === "graded" ? <strong>{group.correct}/{group.total}</strong> : <label className="score-entry"><input type="number" min="0" max={group.total} value={Number.isFinite(homeworkScores[group.skill]) ? homeworkScores[group.skill] : ""} onChange={(event) => setHomeworkScores((current) => ({ ...current, [group.skill]: event.target.value === "" ? Number.NaN : Number(event.target.value) }))} /><span>/ {group.total}</span></label>}<div className="mini-bar"><span style={{ width: group.correct === null ? "0%" : `${Math.round((group.correct / group.total) * 100)}%` }} /></div></article>)}</div>
+                    {selected.data.homework.status !== "graded" && <label className="teacher-note-field">教师抽查说明（可选）<textarea rows={3} value={homeworkNote} onChange={(event) => setHomeworkNote(event.target.value)} placeholder="例如：开放解释题仍然只抄原文，没有说明证据关系。" /></label>}
                     <div className="feedback-card"><strong>自动反馈</strong><p>{selected.data.homework.automaticFeedback}</p><small>{selected.data.homework.teacherCheck}</small></div>
-                    {!selected.completed.homework && <div className="panel-action"><span>批改后自动调整第二课重点并更新学生状态建议。</span><button className="primary-button" onClick={() => void advance("grade_homework")} disabled={!selected.completed.lesson || Boolean(running)}>模拟提交并批改作业</button></div>}
+                    {!selected.completed.homework && <div className="panel-action"><span>{homeworkComplete ? "成绩完整：系统会按低于60%的子技能调整第二课。" : "请填写每组实际得分。"}</span><button className="primary-button" onClick={saveHomework} disabled={!selected.completed.lesson || !homeworkComplete || Boolean(running)}>保存真实作业结果</button></div>}
+                  </div>
+                )}
+
+                {activeTab === "timeline" && (
+                  <div className="workspace-panel">
+                    <div className="panel-heading"><div><h3>学生学习证据时间线</h3><p>每次诊断、教师确认、课堂、作业和复测都保留来源与可信度。</p></div><span>{selected.data.evidenceTimeline?.length ?? 0}条证据</span></div>
+                    <div className="evidence-timeline">{[...(selected.data.evidenceTimeline ?? [])].reverse().map((entry) => (
+                      <article key={entry.id}>
+                        <div><span>{new Date(entry.occurredAt).toLocaleDateString("zh-HK")}</span><b>可信度：{entry.confidence}</b></div>
+                        <small>{entry.type.replace("_", " ").toUpperCase()}</small>
+                        <h4>{entry.title}</h4>
+                        <p>{entry.summary}</p>
+                        <footer><span>证据来源：{entry.source}</span><em>{entry.skills.join(" · ")}</em></footer>
+                      </article>
+                    ))}</div>
                   </div>
                 )}
 
                 {activeTab === "report" && (
                   <div className="workspace-panel">
                     <div className="panel-heading"><div><h3>前测—后测—延迟复测</h3><p>只有可比较的新材料和延迟证据，才用于判断学习是否稳定。</p></div><span>{selected.completed.stageTest ? "阶段报告已生成" : "等待阶段复测"}</span></div>
-                    <div className="trend-table"><div><b>子技能</b><b>初测</b><b>四课后</b><b>延迟复测</b><b>证据</b></div>{selected.data.progress.map((row) => <div key={row.skill}><strong>{row.skill}</strong><span>{row.baseline}%</span><span>{row.post === null ? "–" : `${row.post}%`}</span><span>{row.delayed === null ? "–" : `${row.delayed}%`}</span><small>{row.evidence}</small></div>)}</div>
+                    <div className="trend-table"><div><b>子技能</b><b>初测</b><b>四课后</b><b>延迟复测</b><b>证据</b></div>{selected.data.progress.map((row) => <div key={row.skill}><strong>{row.skill}</strong><span>{row.baseline}%</span>{selected.completed.stageTest ? <><span>{row.post === null ? "–" : `${row.post}%`}</span><span>{row.delayed === null ? "–" : `${row.delayed}%`}</span></> : <><input aria-label={`${row.skill}后测`} type="number" min="0" max="100" value={Number.isFinite(stageScores[row.skill]?.post) ? stageScores[row.skill]?.post : ""} onChange={(event) => setStageScores((current) => ({ ...current, [row.skill]: { ...current[row.skill], post: event.target.value === "" ? Number.NaN : Number(event.target.value) } }))} /><input aria-label={`${row.skill}延迟复测`} type="number" min="0" max="100" value={Number.isFinite(stageScores[row.skill]?.delayed) ? stageScores[row.skill]?.delayed : ""} onChange={(event) => setStageScores((current) => ({ ...current, [row.skill]: { ...current[row.skill], delayed: event.target.value === "" ? Number.NaN : Number(event.target.value) } }))} /></>}<small>{row.evidence}</small></div>)}</div>
                     <div className="report-grid"><article><small>教师版</small><p>{selected.data.reports.teacher}</p></article><article><small>学生版</small><p>{selected.data.reports.student}</p></article><article><small>家长版</small><p>{selected.data.reports.parent}</p></article></div>
-                    {!selected.completed.stageTest && <div className="panel-action"><span>当前使用模拟平行卷数据验证报告结构，不代表真实教学效果。</span><button className="primary-button" onClick={() => void advance("run_stage_test")} disabled={!selected.completed.homework || Boolean(running)}>运行模拟阶段复测</button></div>}
+                    {!selected.completed.stageTest && <div className="panel-action"><span>{stageTestComplete ? "复测结果完整：系统将生成真实进步与保持报告。" : "请填写每项后测和延迟复测百分比。"}</span><button className="primary-button" onClick={saveStageTest} disabled={!selected.completed.homework || !stageTestComplete || Boolean(running)}>生成真实阶段报告</button></div>}
+                  </div>
+                )}
+
+                {activeTab === "items" && (
+                  <div className="workspace-panel">
+                    <div className="panel-heading"><div><h3>题目质量与评分覆盖</h3><p>根据真实作答数量、自动评分覆盖和正确率持续检查题目。</p></div><span>{itemQuality?.summary.total ?? 0}道题</span></div>
+                    {itemQuality ? <>
+                      <div className="quality-summary">
+                        <article><span>已有结构化评分</span><strong>{itemQuality.summary.structuredScoring}</strong></article>
+                        <article><span>缺少评分规则</span><strong>{itemQuality.summary.needsScoringRules}</strong></article>
+                        <article><span>样本不足</span><strong>{itemQuality.summary.lowSample}</strong></article>
+                        <article><span>难度待检查</span><strong>{itemQuality.summary.needsDifficultyReview}</strong></article>
+                      </div>
+                      <div className="quality-table-wrap"><table className="quality-table"><thead><tr><th>题目</th><th>能力标签</th><th>作答样本</th><th>评分覆盖</th><th>正确率</th><th>下一步</th></tr></thead><tbody>{itemQuality.items.filter((item) => item.flag !== "可持续观察").map((item) => <tr key={item.id}><td><strong>{item.id}</strong><small>{domainMeta[item.domain].short} · {item.type}</small></td><td>{item.code}</td><td>{item.responseCount}</td><td>{item.scoringCoverage}%</td><td>{item.accuracy === null ? "–" : `${item.accuracy}%`}</td><td><span className={`quality-flag flag-${item.flag}`}>{item.flag}</span></td></tr>)}</tbody></table></div>
+                    </> : <div className="empty-state">正在读取题目质量数据。</div>}
                   </div>
                 )}
 
@@ -330,11 +430,16 @@ function nextActionDescription(item: WorkspaceItem) {
   return "系统可以提出优化，但不会未经审核自行修改策略或发布新题。";
 }
 
-function nextActionButton(item: WorkspaceItem, running: string, advance: (action: AutomationAction) => Promise<void>) {
+function nextActionButton(
+  item: WorkspaceItem,
+  running: string,
+  advance: (action: AutomationAction, automationInput?: AutomationInput) => Promise<void>,
+  openTab: (tab: TabKey) => void,
+) {
   if (!item.completed.diagnosis) return <button className="primary-button" onClick={() => void advance("confirm_diagnosis")} disabled={Boolean(running)}>确认诊断</button>;
   if (!item.completed.plan) return <button className="primary-button" onClick={() => void advance("approve_plan")} disabled={Boolean(running)}>批准计划</button>;
-  if (!item.completed.lesson) return <button className="primary-button" onClick={() => void advance("complete_lesson")} disabled={Boolean(running)}>模拟完成本课</button>;
-  if (!item.completed.homework) return <button className="primary-button" onClick={() => void advance("grade_homework")} disabled={Boolean(running)}>批改作业</button>;
-  if (!item.completed.stageTest) return <button className="primary-button" onClick={() => void advance("run_stage_test")} disabled={Boolean(running)}>运行复测</button>;
-  return <button className="secondary-button" onClick={() => void advance("run_full_cycle")} disabled={Boolean(running)}>重新生成演示闭环</button>;
+  if (!item.completed.lesson) return <button className="primary-button" onClick={() => openTab("record")} disabled={Boolean(running)}>填写课堂记录</button>;
+  if (!item.completed.homework) return <button className="primary-button" onClick={() => openTab("homework")} disabled={Boolean(running)}>录入作业成绩</button>;
+  if (!item.completed.stageTest) return <button className="primary-button" onClick={() => openTab("report")} disabled={Boolean(running)}>录入阶段复测</button>;
+  return item.isDemo ? <button className="secondary-button" onClick={() => void advance("run_full_cycle")} disabled={Boolean(running)}>重新生成演示闭环</button> : <button className="secondary-button" onClick={() => openTab("timeline")}>查看完整学习轨迹</button>;
 }

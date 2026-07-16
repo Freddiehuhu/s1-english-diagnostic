@@ -7,7 +7,9 @@ import {
   advanceTeachingWorkspace,
   buildTeachingWorkspace,
   teachingPolicyVersion,
+  upgradeTeachingWorkspace,
   type AutomationAction,
+  type AutomationInput,
   type CompletedSteps,
   type TeachingWorkspaceData,
   type WorkspaceStage,
@@ -47,7 +49,7 @@ async function listWorkspaces() {
     sourceSubmissionId: workspace.sourceSubmissionId,
     stage: workspace.stage as WorkspaceStage,
     policyVersion: workspace.policyVersion,
-    data: parseJson<TeachingWorkspaceData>(workspace.workspaceJson, {} as TeachingWorkspaceData),
+    data: upgradeTeachingWorkspace(parseJson<TeachingWorkspaceData>(workspace.workspaceJson, {} as TeachingWorkspaceData)),
     completed: parseJson<CompletedSteps>(workspace.completedStepsJson, {}),
     updatedAt: workspace.updatedAt,
   }));
@@ -91,6 +93,7 @@ export async function POST(request: Request) {
       action?: "sync" | "advance";
       workspaceId?: string;
       automationAction?: AutomationAction;
+      automationInput?: AutomationInput;
     };
 
     if (payload.action === "sync") {
@@ -174,6 +177,24 @@ export async function POST(request: Request) {
             eventType: "DiagnosticSubmitted",
             payload: { sourceSubmissionId: row.id, assessmentVersion: row.assessmentVersion },
           });
+        } else if (existingWorkspace.policyVersion !== teachingPolicyVersion) {
+          const upgraded = upgradeTeachingWorkspace(
+            parseJson<TeachingWorkspaceData>(existingWorkspace.workspaceJson, {} as TeachingWorkspaceData),
+          );
+          await getDb()
+            .update(teachingWorkspaces)
+            .set({
+              policyVersion: teachingPolicyVersion,
+              workspaceJson: JSON.stringify(upgraded),
+              updatedAt: new Date().toISOString(),
+            })
+            .where(eq(teachingWorkspaces.id, existingWorkspace.id));
+          await addEvent({
+            studentId,
+            workspaceId: existingWorkspace.id,
+            eventType: "PolicyUpgraded",
+            payload: { policyVersion: teachingPolicyVersion },
+          });
         }
       }
 
@@ -192,7 +213,15 @@ export async function POST(request: Request) {
 
       const currentData = parseJson<TeachingWorkspaceData>(workspace.workspaceJson, {} as TeachingWorkspaceData);
       const currentCompleted = parseJson<CompletedSteps>(workspace.completedStepsJson, {});
-      const next = advanceTeachingWorkspace(currentData, currentCompleted, payload.automationAction);
+      if (payload.automationAction === "run_full_cycle" && !currentData.profile.isDemo) {
+        return Response.json({ error: "真实学生不能写入模拟教学数据。" }, { status: 400 });
+      }
+      const next = advanceTeachingWorkspace(
+        currentData,
+        currentCompleted,
+        payload.automationAction,
+        payload.automationInput,
+      );
 
       await getDb()
         .update(teachingWorkspaces)
@@ -207,7 +236,11 @@ export async function POST(request: Request) {
         studentId: workspace.studentId,
         workspaceId: workspace.id,
         eventType: next.eventType,
-        payload: { action: payload.automationAction, nextStage: next.stage },
+        payload: {
+          action: payload.automationAction,
+          nextStage: next.stage,
+          inputMode: payload.automationInput?.simulate ? "simulated" : "teacher_entered",
+        },
       });
 
       return Response.json({ items: await listWorkspaces(), message: "自动化步骤已完成并写入事件记录。" });
